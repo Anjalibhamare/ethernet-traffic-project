@@ -1,0 +1,3 @@
+# Core scripts use only the Python standard library.
+# Optional packet inspection library:
+scapy>=2.5.0
