@@ -1,34 +1,15 @@
-#!/usr/bin/env bash
-# Capture a short, filtered lab trace. Requires tcpdump and permission to capture.
-set -euo pipefail
-IFACE="${1:-lo}"
-PROTO="${2:-udp}"
-DURATION="${3:-20}"
-OUTDIR="captures"
-mkdir -p "$OUTDIR"
-case "$PROTO" in
-  arp) FILTER="arp" ;;
-  icmp) FILTER="icmp" ;;
-  tcp) FILTER="tcp" ;;
-  udp) FILTER="udp" ;;
-  all) FILTER="" ;;
-  *) echo "Usage: sudo $0 <interface> <arp|icmp|tcp|udp|all> [seconds]" >&2; exit 2 ;;
-esac
-if ! command -v tcpdump >/dev/null 2>&1; then
-  echo "tcpdump is required. Install it with your distribution package manager." >&2
-  exit 1
-fi
-STAMP="$(date +%Y%m%d_%H%M%S)"
-FILE="$OUTDIR/${PROTO}_${STAMP}.pcap"
-echo "Capturing on $IFACE for $DURATION seconds -> $FILE"
-if [[ -n "$FILTER" ]]; then
-  timeout "$DURATION" tcpdump -i "$IFACE" -nn -s 0 -w "$FILE" "$FILTER" || STATUS=$?
-else
-  timeout "$DURATION" tcpdump -i "$IFACE" -nn -s 0 -w "$FILE" || STATUS=$?
-fi
-if [[ "${STATUS:-0}" -gt 1 ]]; then
-  echo "Capture ended with status ${STATUS}; inspect the message above." >&2
-  exit "$STATUS"
-fi
-echo "Saved capture: $FILE"
-echo "Open it with: wireshark '$FILE'"
+# Capture a short protocol-filtered trace. Use only on networks you are authorised to inspect.
+set -Eeuo pipefail
+usage(){ echo 'Usage: sudo bash scripts/capture_traffic.sh <interface> <arp|icmp|tcp|udp|all> [seconds]'; }
+IFACE="${1:-}"; PROTO="${2:-}"; DURATION="${3:-20}"
+if [[ -z "$IFACE" || -z "$PROTO" ]]; then usage >&2; exit 2; fi
+if ! [[ "$DURATION" =~ ^[1-9][0-9]*$ ]]; then echo 'Duration must be a positive integer.' >&2; exit 2; fi
+case "$PROTO" in arp) FILTER=arp;; icmp) FILTER=icmp;; tcp) FILTER=tcp;; udp) FILTER=udp;; all) FILTER='';; *) usage >&2; exit 2;; esac
+command -v tcpdump >/dev/null || { echo 'tcpdump is not installed.' >&2; exit 1; }
+mkdir -p captures
+STAMP="$(date +%Y%m%d_%H%M%S)"; OUT="captures/${PROTO}_${STAMP}.pcap"
+echo "Capturing $PROTO on $IFACE for $DURATION seconds -> $OUT"
+ARGS=(-i "$IFACE" -nn -s 0 -U -w "$OUT"); [[ -z "$FILTER" ]] || ARGS+=("$FILTER")
+set +e; timeout --signal=INT "$DURATION" tcpdump "${ARGS[@]}"; STATUS=$?; set -e
+if [[ $STATUS -ne 0 && $STATUS -ne 124 && $STATUS -ne 130 ]]; then echo "Capture failed with status $STATUS" >&2; exit "$STATUS"; fi
+if [[ -s "$OUT" ]]; then echo "Saved: $OUT"; echo "Open: wireshark '$OUT'"; else echo 'No packets saved; check interface and generate matching traffic.' >&2; exit 1; fi
